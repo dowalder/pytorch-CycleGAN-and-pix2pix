@@ -8,6 +8,7 @@ dist/
 *.png
 torch.egg-info/
 */**/__pycache__
+venv_pix/
 torch/version.py
 torch/csrc/generic/TensorMethods.cpp
 torch/lib/*.so*
