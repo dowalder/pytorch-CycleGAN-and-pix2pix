@@ -83,6 +83,8 @@ def define_G(input_nc, output_nc, ngf, which_model_netG, norm='batch', use_dropo
         netG = UnetGenerator(input_nc, output_nc, 8, ngf, norm_layer=norm_layer, use_dropout=use_dropout)
     elif which_model_netG == 'no_skip':
         netG = UnetNoSkipGenerator(input_nc, output_nc, 8, ngf, norm_layer=norm_layer, use_dropout=use_dropout)
+    elif which_model_netG == 'domnet':
+        netG = DescriptorInTheMiddle(input_nc, output_nc, ngf, norm_layer=norm_layer, descriptor_size=1024)
     else:
         raise NotImplementedError('Generator model name [%s] is not recognized' % which_model_netG)
     return init_net(netG, init_type, init_gain, gpu_ids)
@@ -262,13 +264,13 @@ class UnetNoSkipGenerator(nn.Module):
         super(UnetNoSkipGenerator, self).__init__()
 
         # construct unet structure
-        unet_block = UnetNoSkipConnectionBlock(ngf * 8, ngf * 8, input_nc=None, submodule=None, norm_layer=norm_layer, innermost=True)
+        unet_block = UnetNoSkipConnectionBlock(ngf * 8, ngf * 8, input_nc=None, submodule=None, norm_layer=norm_layer, innermost=True, noskip=True)
         for i in range(num_downs - 5):
-            unet_block = UnetNoSkipConnectionBlock(ngf * 8, ngf * 8, input_nc=None, submodule=unet_block, norm_layer=norm_layer, use_dropout=use_dropout)
-        unet_block = UnetNoSkipConnectionBlock(ngf * 4, ngf * 8, input_nc=None, submodule=unet_block, norm_layer=norm_layer)
-        unet_block = UnetNoSkipConnectionBlock(ngf * 2, ngf * 4, input_nc=None, submodule=unet_block, norm_layer=norm_layer)
-        unet_block = UnetNoSkipConnectionBlock(ngf, ngf * 2, input_nc=None, submodule=unet_block, norm_layer=norm_layer)
-        unet_block = UnetNoSkipConnectionBlock(output_nc, ngf, input_nc=input_nc, submodule=unet_block, outermost=True, norm_layer=norm_layer)
+            unet_block = UnetNoSkipConnectionBlock(ngf * 8, ngf * 8, input_nc=None, submodule=unet_block, norm_layer=norm_layer, use_dropout=use_dropout, noskip=True)
+        unet_block = UnetNoSkipConnectionBlock(ngf * 4, ngf * 8, input_nc=None, submodule=unet_block, norm_layer=norm_layer, noskip=True)
+        unet_block = UnetNoSkipConnectionBlock(ngf * 2, ngf * 4, input_nc=None, submodule=unet_block, norm_layer=norm_layer, noskip=True)
+        unet_block = UnetNoSkipConnectionBlock(ngf, ngf * 2, input_nc=None, submodule=unet_block, norm_layer=norm_layer, noskip=True)
+        unet_block = UnetNoSkipConnectionBlock(output_nc, ngf, input_nc=input_nc, submodule=unet_block, outermost=True, norm_layer=norm_layer, noskip=True)
 
         self.model = unet_block
 
@@ -276,12 +278,66 @@ class UnetNoSkipGenerator(nn.Module):
         return self.model(input)
 
 
+class DescriptorInTheMiddle(nn.Module):
+
+    def __init__(self, input_nc, output_nc, ngf=64, norm_layer=nn.BatchNorm2d, descriptor_size=1024):
+        super(DescriptorInTheMiddle, self).__init__()
+
+        def downconv(inc, outc, k_size, st, pd):
+            return [
+                nn.Conv2d(inc, outc, kernel_size=k_size, stride=st, padding=pd),
+                norm_layer(outc),
+                nn.ReLU(True)
+            ]
+
+        def upconv(inc, outc, k_size, st, pd):
+            return [
+                nn.ConvTranspose2d(inc, outc, kernel_size=k_size, stride=st, padding=pd),
+                norm_layer(outc),
+                nn.ReLU(True)
+            ]
+
+        cnn_down = []
+        cnn_down += downconv(input_nc, ngf, 4, 2, 1)
+        cnn_down += downconv(ngf * 1, ngf * 2, 4, 2, 1)
+        cnn_down += downconv(ngf * 2, ngf * 4, 4, 2, 1)
+        cnn_down += downconv(ngf * 4, ngf * 8, 4, 2, 1)
+        cnn_down += downconv(ngf * 8, ngf * 8, 4, 2, 1)
+        # cnn_down += downconv(ngf * 8, ngf * 8, 4, 2, 1)
+        self.cnn_down = nn.Sequential(*cnn_down)
+
+        # only works for 256x256 images
+        self.to_descriptor = nn.Linear(8 * 8 * 512, descriptor_size)
+        self.from_descriptor = nn.Linear(descriptor_size, 8 * 8 * 512)
+
+        cnn_up = []
+        # cnn_up += upconv(ngf * 8, ngf * 8, 4, 2, 1)
+        cnn_up += upconv(ngf * 8, ngf * 8, 4, 2, 1)
+        cnn_up += upconv(ngf * 8, ngf * 4, 4, 2, 1)
+        cnn_up += upconv(ngf * 4, ngf * 2, 4, 2, 1)
+        cnn_up += upconv(ngf * 2, ngf * 1, 4, 2, 1)
+        cnn_up += upconv(ngf, output_nc, 4, 2, 1)
+        self.cnn_up = nn.Sequential(*cnn_up)
+
+    def forward(self, img):
+        x = self.cnn_down(img)
+        pre_descriptor_shape = x.shape
+        x = x.view(x.size(0), -1)
+        x = self.to_descriptor(x)
+        x = self.from_descriptor(x)
+        x = x.view(*pre_descriptor_shape)
+        x = self.cnn_up(x)
+        return x
+
+
 # Defines the submodule with skip connection.
 # X -------------------identity---------------------- X
 #   |-- downsampling -- |submodule| -- upsampling --|
 class UnetSkipConnectionBlock(nn.Module):
     def __init__(self, outer_nc, inner_nc, input_nc=None,
-                 submodule=None, outermost=False, innermost=False, norm_layer=nn.BatchNorm2d, use_dropout=False):
+                 submodule=None, outermost=False, innermost=False,
+                 norm_layer=nn.BatchNorm2d, use_dropout=False,
+                 noskip=False):
         super(UnetSkipConnectionBlock, self).__init__()
         self.outermost = outermost
         if type(norm_layer) == functools.partial:
@@ -297,8 +353,10 @@ class UnetSkipConnectionBlock(nn.Module):
         uprelu = nn.ReLU(True)
         upnorm = norm_layer(outer_nc)
 
+        mult = 1.0 if noskip else 2.0
+
         if outermost:
-            upconv = nn.ConvTranspose2d(inner_nc * 2, outer_nc,
+            upconv = nn.ConvTranspose2d(inner_nc * mult, outer_nc,
                                         kernel_size=4, stride=2,
                                         padding=1)
             down = [downconv]
@@ -312,7 +370,7 @@ class UnetSkipConnectionBlock(nn.Module):
             up = [uprelu, upconv, upnorm]
             model = down + up
         else:
-            upconv = nn.ConvTranspose2d(inner_nc * 2, outer_nc,
+            upconv = nn.ConvTranspose2d(inner_nc * mult, outer_nc,
                                         kernel_size=4, stride=2,
                                         padding=1, bias=use_bias)
             down = [downrelu, downconv, downnorm]
