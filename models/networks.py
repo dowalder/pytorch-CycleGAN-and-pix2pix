@@ -280,7 +280,7 @@ class UnetNoSkipGenerator(nn.Module):
 
 class DescriptorInTheMiddle(nn.Module):
 
-    def __init__(self, input_nc, output_nc, ngf=64, norm_layer=nn.BatchNorm2d, descriptor_size=1024):
+    def __init__(self, input_nc, output_nc, ngf=64, norm_layer=nn.BatchNorm2d, descriptor_size=1024, use_fully_con=True):
         super(DescriptorInTheMiddle, self).__init__()
 
         def downconv(inc, outc, k_size, st, pd):
@@ -307,10 +307,12 @@ class DescriptorInTheMiddle(nn.Module):
         cnn_down += downconv(ngf * 8, ngf * 8, 4, 2, 1)
 
         self.cnn_down = nn.Sequential(*cnn_down)
-
-        # only works for 256x256 images
-        self.to_descriptor = nn.Linear(2 * 2 * 512, descriptor_size)
-        self.from_descriptor = nn.Linear(descriptor_size, 2 * 2 * 512)
+        
+        self.fully_con = use_fully_con
+        if use_fully_con:
+            # only works for 256x256 images
+            self.to_descriptor = nn.Linear(2 * 2 * 512, descriptor_size)
+            self.from_descriptor = nn.Linear(descriptor_size, 2 * 2 * 512)
 
         cnn_up = []
         cnn_up += upconv(ngf * 8, ngf * 8, 4, 2, 1)
@@ -324,11 +326,14 @@ class DescriptorInTheMiddle(nn.Module):
 
     def forward(self, img):
         x = self.cnn_down(img)
-        pre_descriptor_shape = x.shape
-        x = x.view(x.size(0), -1)
-        x = self.to_descriptor(x)
-        x = self.from_descriptor(x)
-        x = x.view(*pre_descriptor_shape)
+
+        if self.fully_con:
+            pre_descriptor_shape = x.shape
+            x = x.view(x.size(0), -1)
+            x = self.to_descriptor(x)
+            x = self.from_descriptor(x)
+            x = x.view(*pre_descriptor_shape)
+
         x = self.cnn_up(x)
         return x
 
