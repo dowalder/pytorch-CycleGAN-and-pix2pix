@@ -301,19 +301,22 @@ class DescriptorInTheMiddle(nn.Module):
         cnn_down += downconv(input_nc, ngf, 4, 2, 1)
         cnn_down += downconv(ngf * 1, ngf * 2, 4, 2, 1)
         cnn_down += downconv(ngf * 2, ngf * 4, 4, 2, 1)
+        cnn_down += downconv(ngf * 4, ngf * 4, 4, 2, 1)
         cnn_down += downconv(ngf * 4, ngf * 8, 4, 2, 1)
         cnn_down += downconv(ngf * 8, ngf * 8, 4, 2, 1)
-        # cnn_down += downconv(ngf * 8, ngf * 8, 4, 2, 1)
+        cnn_down += downconv(ngf * 8, ngf * 8, 4, 2, 1)
+
         self.cnn_down = nn.Sequential(*cnn_down)
 
         # only works for 256x256 images
-        self.to_descriptor = nn.Linear(8 * 8 * 512, descriptor_size)
-        self.from_descriptor = nn.Linear(descriptor_size, 8 * 8 * 512)
+        self.to_descriptor = nn.Linear(2 * 2 * 512, descriptor_size)
+        self.from_descriptor = nn.Linear(descriptor_size, 2 * 2 * 512)
 
         cnn_up = []
-        # cnn_up += upconv(ngf * 8, ngf * 8, 4, 2, 1)
+        cnn_up += upconv(ngf * 8, ngf * 8, 4, 2, 1)
         cnn_up += upconv(ngf * 8, ngf * 8, 4, 2, 1)
         cnn_up += upconv(ngf * 8, ngf * 4, 4, 2, 1)
+        cnn_up += upconv(ngf * 4, ngf * 4, 4, 2, 1)
         cnn_up += upconv(ngf * 4, ngf * 2, 4, 2, 1)
         cnn_up += upconv(ngf * 2, ngf * 1, 4, 2, 1)
         cnn_up += upconv(ngf, output_nc, 4, 2, 1)
