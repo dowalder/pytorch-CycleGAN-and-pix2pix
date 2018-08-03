@@ -307,7 +307,7 @@ class DescriptorInTheMiddle(nn.Module):
         cnn_down += downconv(ngf * 8, ngf * 8, 4, 2, 1)
 
         self.cnn_down = nn.Sequential(*cnn_down)
-        
+
         self.fully_con = use_fully_con
         if use_fully_con:
             # only works for 256x256 images
@@ -361,7 +361,7 @@ class UnetSkipConnectionBlock(nn.Module):
         uprelu = nn.ReLU(True)
         upnorm = norm_layer(outer_nc)
 
-        mult = 1.0 if noskip else 2.0
+        mult = 1 if noskip else 2
 
         if outermost:
             upconv = nn.ConvTranspose2d(inner_nc * mult, outer_nc,
