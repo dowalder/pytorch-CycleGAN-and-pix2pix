@@ -25,12 +25,13 @@ def main():
     else:
         device = "cuda:{}".format(args.gpu)
     net = models.networks.UnetGenerator(3, 3, 8)
-    net.load_state_dict(torch.load(args.weights, map_location=device))
     net.to(device)
+    net.load_state_dict(torch.load(args.weights, map_location=device))
 
     forward_transform = torchvision.transforms.Compose([
         torchvision.transforms.Resize((256, 256)),
-        torchvision.transforms.ToTensor()
+        torchvision.transforms.ToTensor(),
+        torchvision.transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
     ])
     backward_transform = torchvision.transforms.Compose([
         torchvision.transforms.ToPILImage(),
@@ -43,13 +44,16 @@ def main():
     for img_path in src_dir.iterdir():
         if img_path.suffix not in [".jpg", ".png"]:
             continue
-        img = PIL.Image.open(img_path.as_posix())
-        img = forward_transform(img)
-        img = net(img)
+        img = PIL.Image.open(img_path.as_posix()).convert("RGB")
+        img = forward_transform(img).unsqueeze(0).to(device)
+        with torch.no_grad():
+            img = net(img).cpu().squeeze()
         img = backward_transform(img)
 
         tgt_path = tgt_dir / img_path.name
         img.save(tgt_path.as_posix())
 
 
+if __name__ == "__main__":
+    main()
 
